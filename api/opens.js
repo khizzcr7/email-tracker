@@ -3,7 +3,13 @@
 // in full (only first 6 chars for debugging). Requires the OPENS_KEY env
 // var, which is only in Vercel env and in the owner's private dashboard link.
 import { list } from '@vercel/blob';
-
+async function fetchJson(b) {
+  const url = b.downloadUrl || b.url;
+  const headers = process.env.BLOB_READ_WRITE_TOKEN ? { Authorization: 'Bearer ' + process.env.BLOB_READ_WRITE_TOKEN } : {};
+  const r = await fetch(url, { headers });
+  if (!r.ok) throw new Error('blob fetch failed');
+  return r.json();
+}
 export default async function handler(req, res) {
   if (!process.env.OPENS_KEY || req.query.key !== process.env.OPENS_KEY) {
     res.status(403).json({ ok: false, error: 'forbidden' });
@@ -24,8 +30,7 @@ export default async function handler(req, res) {
       for (const b of page.blobs) {
         const name = b.pathname.split('/').pop().replace(/\.json$/, '');
         try {
-          const r = await fetch(b.url);
-          const j = await r.json();
+          const j = await fetchJson(b);
           mappings[name] = j.campaign || 'UNKNOWN';
         } catch { mappings[name] = 'UNKNOWN'; }
       }
@@ -37,8 +42,7 @@ export default async function handler(req, res) {
       const token = parts.length >= 2 ? parts[1] : 'unknown';
       let opened_at = null;
       try {
-        const r = await fetch(b.url);
-        const j = await r.json();
+        const j = await fetchJson(b);
         opened_at = j.opened_at || null;
       } catch { /* keep null */ }
       rows.push({
