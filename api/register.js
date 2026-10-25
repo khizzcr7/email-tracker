@@ -5,7 +5,6 @@
 // only, which is what the dashboard shows. The email -> token map stays
 // in the sender's private workspace.
 import { put } from '@vercel/blob';
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ ok: false, error: 'method not allowed' });
@@ -30,6 +29,7 @@ export default async function handler(req, res) {
     access: 'private',
     contentType: 'application/json',
     addRandomSuffix: false,
+    allowOverwrite: true,
   });
   res.status(200).json({ ok: true });
 }
