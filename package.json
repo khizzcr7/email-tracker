@@ -4,6 +4,6 @@
   "private": true,
   "description": "Self-hosted invisible email open tracker. Serves a 1x1 transparent GIF and logs each fetch to Vercel Blob, one blob per open. No third-party tracker, no recipient data in the repo.",
   "dependencies": {
-    "@vercel/blob": "^0.27.0"
+    "@vercel/blob": "^2.3.0"
   }
 }
