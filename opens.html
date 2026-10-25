@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Email opens</title>
+<style>body{font-family:system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#222}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left}th{background:#f2f2f2}.muted{color:#666;font-size:14px}</style>
+</head>
+<body>
+<h1>Email opens</h1>
+<p class="muted">Private dashboard. Do not share this link, anyone with it can see company names and open times. No email addresses are shown here.</p>
+<p id="status">Loading…</p>
+<table id="tbl" style="display:none"><thead><tr><th>Company</th><th>Opened at</th></tr></thead><tbody id="rows"></tbody></table>
+<script>
+(async () => {
+  const key = new URLSearchParams(location.search).get('key');
+  const status = document.getElementById('status');
+  if (!key) { status.textContent = 'Missing key. Open this page with ?key=YOUR_KEY.'; return; }
+  try {
+    const r = await fetch('/api/opens?key=' + encodeURIComponent(key));
+    const j = await r.json();
+    if (!j.ok) { status.textContent = 'Could not load opens.'; return; }
+    status.textContent = j.count + ' opens logged.';
+    const tbody = document.getElementById('rows');
+    for (const o of j.opens) {
+      const tr = document.createElement('tr');
+      const td1 = document.createElement('td'); td1.textContent = o.campaign;
+      const td2 = document.createElement('td'); td2.textContent = o.opened_at ? new Date(o.opened_at).toLocaleString() : 'unknown';
+      tr.append(td1, td2); tbody.append(tr);
+    }
+    document.getElementById('tbl').style.display = 'table';
+  } catch (e) { status.textContent = 'Could not load opens.'; }
+})();
+</script>
+</body>
+</html>
