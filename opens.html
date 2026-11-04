@@ -4,30 +4,96 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Email opens</title>
-<style>body{font-family:system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#222}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left}th{background:#f2f2f2}.muted{color:#666;font-size:14px}</style>
+<style>
+body{font-family:system-ui,sans-serif;max-width:920px;margin:40px auto;padding:0 20px;color:#222}
+table{width:100%;border-collapse:collapse}
+th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left;vertical-align:top}
+th{background:#f2f2f2}
+.muted{color:#666;font-size:14px}
+.cards{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}
+.card{border:1px solid #ddd;border-radius:8px;padding:12px 16px;min-width:140px}
+.card b{font-size:24px;display:block}
+.card span{color:#666;font-size:13px}
+input[type=search]{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:15px;margin:12px 0}
+.num{text-align:right}
+button.detail{background:none;border:0;color:#1a5fb4;cursor:pointer;padding:0;font-size:14px}
+tr.detail-row td{background:#fafafa;font-size:14px}
+tr.detail-row ul{margin:4px 0;padding-left:20px}
+</style>
 </head>
 <body>
 <h1>Email opens</h1>
 <p class="muted">Private dashboard. Do not share this link, anyone with it can see company names and open times. No email addresses are shown here.</p>
+<p class="muted">Opens are pixel fetches, not guaranteed human opens: Gmail and Apple image proxies can fetch the pixel on their own, and image-blocked mail never counts. A reply is still the real signal.</p>
 <p id="status">Loading…</p>
-<table id="tbl" style="display:none"><thead><tr><th>Company</th><th>Opened at</th></tr></thead><tbody id="rows"></tbody></table>
+<div class="cards" id="cards" style="display:none">
+  <div class="card"><b id="c-companies">0</b><span>Companies opened</span></div>
+  <div class="card"><b id="c-opens">0</b><span>Total opens</span></div>
+  <div class="card"><b id="c-emails">0</b><span>Emails opened</span></div>
+  <div class="card"><b id="c-tracked">0</b><span>Emails tracked</span></div>
+</div>
+<input type="search" id="search" placeholder="Search a company…" style="display:none">
+<table id="tbl" style="display:none"><thead><tr><th>Company</th><th class="num">Opens</th><th class="num">Emails</th><th>First opened</th><th>Last opened</th><th></th></tr></thead><tbody id="rows"></tbody></table>
 <script>
 (async () => {
   const key = new URLSearchParams(location.search).get('key');
   const status = document.getElementById('status');
   if (!key) { status.textContent = 'Missing key. Open this page with ?key=YOUR_KEY.'; return; }
+  const fmt = (d) => d ? new Date(d).toLocaleString() : 'unknown';
   try {
     const r = await fetch('/api/opens?key=' + encodeURIComponent(key));
     const j = await r.json();
     if (!j.ok) { status.textContent = 'Could not load opens.'; return; }
-    status.textContent = j.count + ' opens logged.';
+    // Fall back to the old flat format if a cached API is still serving it.
+    const companies = j.companies || (() => {
+      const m = new Map();
+      for (const o of j.opens || []) {
+        if (!m.has(o.campaign)) m.set(o.campaign, { campaign: o.campaign, opens: 0, emails: new Set(), first_opened_at: null, last_opened_at: null, tokens: [] });
+        const c = m.get(o.campaign); c.opens += 1; c.emails.add(o.token_short);
+        if (o.opened_at) { if (!c.first_opened_at || o.opened_at < c.first_opened_at) c.first_opened_at = o.opened_at; if (!c.last_opened_at || o.opened_at > c.last_opened_at) c.last_opened_at = o.opened_at; }
+      }
+      return [...m.values()].map((c) => ({ ...c, emails: c.emails.size })).sort((a, b) => String(b.last_opened_at || '').localeCompare(String(a.last_opened_at || '')));
+    })();
+    const s = j.summary || { total_opens: j.count, companies_opened: companies.length, emails_opened: 0, emails_tracked: 0 };
+    status.textContent = s.companies_opened + ' companies, ' + s.total_opens + ' opens logged.';
+    document.getElementById('c-companies').textContent = s.companies_opened;
+    document.getElementById('c-opens').textContent = s.total_opens;
+    document.getElementById('c-emails').textContent = s.emails_opened;
+    document.getElementById('c-tracked').textContent = s.emails_tracked;
+    document.getElementById('cards').style.display = 'flex';
+    const search = document.getElementById('search'); search.style.display = 'block';
     const tbody = document.getElementById('rows');
-    for (const o of j.opens) {
-      const tr = document.createElement('tr');
-      const td1 = document.createElement('td'); td1.textContent = o.campaign;
-      const td2 = document.createElement('td'); td2.textContent = o.opened_at ? new Date(o.opened_at).toLocaleString() : 'unknown';
-      tr.append(td1, td2); tbody.append(tr);
-    }
+    const render = () => {
+      const q = search.value.trim().toLowerCase();
+      tbody.innerHTML = '';
+      for (const c of companies) {
+        if (q && !c.campaign.toLowerCase().includes(q)) continue;
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td></td><td class="num"></td><td class="num"></td><td></td><td></td><td></td>';
+        tr.children[0].textContent = c.campaign;
+        tr.children[1].textContent = c.opens;
+        tr.children[2].textContent = c.emails;
+        tr.children[3].textContent = fmt(c.first_opened_at);
+        tr.children[4].textContent = fmt(c.last_opened_at);
+        const btn = document.createElement('button'); btn.className = 'detail'; btn.textContent = 'Detail';
+        let detail = null;
+        btn.onclick = () => {
+          if (detail) { detail.remove(); detail = null; btn.textContent = 'Detail'; return; }
+          detail = document.createElement('tr'); detail.className = 'detail-row';
+          const td = document.createElement('td'); td.colSpan = 6;
+          if (c.tokens && c.tokens.length) {
+            td.innerHTML = '<b>Tracked emails for this company</b><ul>' + c.tokens.map((t) => '<li>…' + t.token_short + ': ' + t.opens + ' open(s), last ' + fmt(t.last_opened_at) + '</li>').join('') + '</ul><span class="muted">Each entry is one email sent to this company; the token ending is only for matching it to a send, not an address.</span>';
+          } else {
+            td.textContent = 'No per-email breakdown available for this company.';
+          }
+          detail.append(td); tr.after(detail); btn.textContent = 'Hide';
+        };
+        tr.children[5].append(btn); tbody.append(tr);
+      }
+      if (!tbody.children.length) { const tr = document.createElement('tr'); const td = document.createElement('td'); td.colSpan = 6; td.textContent = 'No companies match that search.'; tr.append(td); tbody.append(tr); }
+    };
+    search.addEventListener('input', render);
+    render();
     document.getElementById('tbl').style.display = 'table';
   } catch (e) { status.textContent = 'Could not load opens.'; }
 })();
