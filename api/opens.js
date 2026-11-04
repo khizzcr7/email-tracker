@@ -68,25 +68,57 @@ export default async function handler(req, res) {
       const j = fetchedOpens[i];
       return {
         campaign: mappings[token] || 'UNKNOWN',
-        opened_at: j ? j.opened_at || null : null,
+        opened_at: j && j.opened_at ? j.opened_at : null,
         token,
         token_short: token.slice(0, 6),
       };
     });
-    const grouped = {};
+    rows.sort((a, b) => String(b.opened_at || '').localeCompare(String(a.opened_at || '')));
+
+    // Group by company, then by tracked email (token) inside it.
+    const byCompany = new Map();
     for (const r of rows) {
-      const g = grouped[r.campaign] || (grouped[r.campaign] = { campaign: r.campaign, count: 0, first_open: null, last_open: null, tokens: [] });
-      g.count++;
-      if (r.opened_at) {
-        if (!g.first_open || r.opened_at < g.first_open) g.first_open = r.opened_at;
-        if (!g.last_open || r.opened_at > g.last_open) g.last_open = r.opened_at;
+      if (!byCompany.has(r.campaign)) {
+        byCompany.set(r.campaign, { campaign: r.campaign, opens: 0, tokens: new Map(), first_opened_at: null, last_opened_at: null });
       }
-      if (!g.tokens.includes(r.token_short)) g.tokens.push(r.token_short);
+      const c = byCompany.get(r.campaign);
+      c.opens += 1;
+      const t = c.tokens.get(r.token);
+      if (!t) c.tokens.set(r.token, { token_short: r.token_short, opens: 0, first_opened_at: null, last_opened_at: null });
+      const t2 = c.tokens.get(r.token);
+      t2.opens += 1;
+      if (r.opened_at) {
+        if (!c.first_opened_at || r.opened_at < c.first_opened_at) c.first_opened_at = r.opened_at;
+        if (!c.last_opened_at || r.opened_at > c.last_opened_at) c.last_opened_at = r.opened_at;
+        if (!t2.first_opened_at || r.opened_at < t2.first_opened_at) t2.first_opened_at = r.opened_at;
+        if (!t2.last_opened_at || r.opened_at > t2.last_opened_at) t2.last_opened_at = r.opened_at;
+      }
     }
-    const groupedRows = Object.values(grouped).sort((a, b) => (b.last_open || '').localeCompare(a.last_open || ''));
-    const total = rows.length;
-    res.status(200).json({ ok: true, total, grouped: groupedRows, rows });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e && e.message ? e.message : e) });
+    const companies = [...byCompany.values()].map((c) => ({
+      campaign: c.campaign,
+      opens: c.opens,
+      emails: c.tokens.size,
+      first_opened_at: c.first_opened_at,
+      last_opened_at: c.last_opened_at,
+      tokens: [...c.tokens.values()].sort((a, b) => String(b.last_opened_at || '').localeCompare(String(a.last_opened_at || ''))),
+    }));
+    companies.sort((a, b) => String(b.last_opened_at || '').localeCompare(String(a.last_opened_at || '')));
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json({
+      ok: true,
+      count: rows.length,
+      opens: rows,
+      companies,
+      summary: {
+        total_opens: rows.length,
+        companies_opened: companies.length,
+        emails_opened: new Set(rows.map((r) => r.token)).size,
+        emails_tracked: Object.keys(mappings).length,
+      },
+    });
+  } catch (err) {
+    console.error('opens list failed', err && err.message ? err.message : err);
+    res.status(500).json({ ok: false, error: 'could not list opens' });
   }
 }
