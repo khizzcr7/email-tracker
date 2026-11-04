@@ -41,9 +41,14 @@ tr.detail-row ul{margin:4px 0;padding-left:20px}
   if (!key) { status.textContent = 'Missing key. Open this page with ?key=YOUR_KEY.'; return; }
   const fmt = (d) => d ? new Date(d).toLocaleString() : 'unknown';
   try {
-    const r = await fetch('/api/opens?key=' + encodeURIComponent(key));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    let r;
+    try {
+      r = await fetch('/api/opens?key=' + encodeURIComponent(key), { signal: controller.signal });
+    } finally { clearTimeout(timer); }
     const j = await r.json();
-    if (!j.ok) { status.textContent = 'Could not load opens.'; return; }
+    if (!j.ok) { status.textContent = 'Could not load opens. Reload the page to retry.'; return; }
     // Fall back to the old flat format if a cached API is still serving it.
     const companies = j.companies || (() => {
       const m = new Map();
@@ -95,7 +100,7 @@ tr.detail-row ul{margin:4px 0;padding-left:20px}
     search.addEventListener('input', render);
     render();
     document.getElementById('tbl').style.display = 'table';
-  } catch (e) { status.textContent = 'Could not load opens.'; }
+  } catch (e) { status.textContent = 'Could not load opens. Check your connection and reload the page to retry.'; }
 })();
 </script>
 </body>
