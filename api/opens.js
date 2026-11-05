@@ -5,6 +5,11 @@
 // forward, or a Gmail/Apple image-proxy refetch) was its own row, and
 // every separate email to the same company used a new token but the same
 // campaign name.
+// An "open" here means one session: fetches of the same token within
+// SESSION_WINDOW_MS of the previous fetch count as a single open, because
+// Gmail/Apple image proxies fetch the same pixel several times per human
+// open. Raw fetch counts are kept alongside as raw_fetches, so nothing
+// is hidden. Same window as api/track.js uses to skip duplicate writes.
 // Campaign names only, no email addresses, no tokens in full (only first
 // 6 chars for debugging). Requires the OPENS_KEY env var, which is only
 // in Vercel env and in the owner's private dashboard link.
@@ -75,18 +80,34 @@ export default async function handler(req, res) {
     });
     rows.sort((a, b) => String(b.opened_at || '').localeCompare(String(a.opened_at || '')));
 
+    // Mark session starts: the first fetch per token, or a fetch more than
+    // SESSION_WINDOW_MS after the previous fetch of the same token. The
+    // rows array itself stays raw (every fetch visible); only the counts
+    // below use sessions.
+    const SESSION_WINDOW_MS = 30 * 60 * 1000;
+    const lastFetchByToken = new Map();
+    for (const r of [...rows].sort((a, b) => String(a.opened_at || '').localeCompare(String(b.opened_at || '')))) {
+      const t = Date.parse(r.opened_at || '');
+      const last = lastFetchByToken.get(r.token);
+      r.is_session = !last || Number.isNaN(t) || t - last > SESSION_WINDOW_MS;
+      if (!Number.isNaN(t)) lastFetchByToken.set(r.token, t);
+    }
+    const totalSessions = rows.filter((r) => r.is_session).length;
+
     // Group by company, then by tracked email (token) inside it.
     const byCompany = new Map();
     for (const r of rows) {
       if (!byCompany.has(r.campaign)) {
-        byCompany.set(r.campaign, { campaign: r.campaign, opens: 0, tokens: new Map(), first_opened_at: null, last_opened_at: null });
+        byCompany.set(r.campaign, { campaign: r.campaign, opens: 0, raw_fetches: 0, tokens: new Map(), first_opened_at: null, last_opened_at: null });
       }
       const c = byCompany.get(r.campaign);
-      c.opens += 1;
+      if (r.is_session) c.opens += 1;
+      c.raw_fetches += 1;
       const t = c.tokens.get(r.token);
-      if (!t) c.tokens.set(r.token, { token_short: r.token_short, opens: 0, first_opened_at: null, last_opened_at: null });
+      if (!t) c.tokens.set(r.token, { token_short: r.token_short, opens: 0, raw_fetches: 0, first_opened_at: null, last_opened_at: null });
       const t2 = c.tokens.get(r.token);
-      t2.opens += 1;
+      if (r.is_session) t2.opens += 1;
+      t2.raw_fetches += 1;
       if (r.opened_at) {
         if (!c.first_opened_at || r.opened_at < c.first_opened_at) c.first_opened_at = r.opened_at;
         if (!c.last_opened_at || r.opened_at > c.last_opened_at) c.last_opened_at = r.opened_at;
@@ -97,6 +118,7 @@ export default async function handler(req, res) {
     const companies = [...byCompany.values()].map((c) => ({
       campaign: c.campaign,
       opens: c.opens,
+      raw_fetches: c.raw_fetches,
       emails: c.tokens.size,
       first_opened_at: c.first_opened_at,
       last_opened_at: c.last_opened_at,
@@ -111,7 +133,8 @@ export default async function handler(req, res) {
       opens: rows,
       companies,
       summary: {
-        total_opens: rows.length,
+        total_opens: totalSessions,
+        raw_fetches: rows.length,
         companies_opened: companies.length,
         emails_opened: new Set(rows.map((r) => r.token)).size,
         emails_tracked: Object.keys(mappings).length,
